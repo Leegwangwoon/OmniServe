@@ -1,5 +1,5 @@
 version: '3.8'
-services: 
+services:
 ########################################################
 # TRACK A                                              #
 ########################################################
@@ -15,6 +15,7 @@ services:
     volumes:
       - ${VLM_ENCODER_VISION_MODEL_PATH}:/workspace/app/model/weights:ro
     environment:
+      - NVIDIA_DISABLE_REQUIRE=true
       - CONFIG_PATH=/workspace/config.json
       - MODEL_ID=${VLM_ENCODER_VISION_MODEL_ID}
     ipc: host
@@ -48,12 +49,15 @@ services:
     runtime: nvidia
     user: root
     entrypoint: ["/bin/bash", "-c"]
-    command: ["vllm serve /vllm-workspace/model --host 0.0.0.0  --chat-template-content-format=string  --enable-auto-tool-choice --tool-call-parser glm45 --port 10021 --tensor-parallel-size 2 --served-model-name track_a_model --trust-remote-code --reasoning-parser deepseek_v3 --enable-prompt-embeds --chat-template /vllm-workspace/chat_template.jinja --reasoning-config '{\"think_start_str\": \"<think>\", \"think_end_str\": \" Now formulate the answer.</think>\"}'"]
+    command: ["vllm serve /vllm-workspace/model --host 0.0.0.0 --chat-template-content-format=string --enable-auto-tool-choice --tool-call-parser glm45 --port 10021 --tensor-parallel-size 1 --served-model-name track_a_model --trust-remote-code --reasoning-parser deepseek_v3 --enable-prompt-embeds --chat-template /vllm-workspace/chat_template.jinja --reasoning-config '{\"think_start_str\": \"<think>\", \"think_end_str\": \" Now formulate the answer.</think>\"}' --gpu-memory-utilization 0.8"]
     ports:
       - "${VLM_LLM_PORT:-10021}:10021"
     volumes:
       - ./omni_chainer/tests/chat_template/track_a/chat_template.jinja:/vllm-workspace/chat_template.jinja:ro
       - ${VLM_MODEL_PATH}:/vllm-workspace/model:ro
+    environment:
+      - NVIDIA_DISABLE_REQUIRE=true
+      - VLLM_USE_V1=0
     ipc: host
     shm_size: '16gb'
     deploy:
@@ -61,7 +65,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["1","2"]
+              device_ids: ["0"]
               capabilities: [gpu]
     profiles:
       - track-a
@@ -71,7 +75,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 300s  # 30B 모델 로딩 시간 고려 (5분)
+      start_period: 300s
     networks:
       - encoder-network
 
@@ -90,6 +94,7 @@ services:
     volumes:
       - ${OMNI_ENCODER_AUDIO_MODEL_PATH}:/workspace/app/model/weights:ro
     environment:
+      - NVIDIA_DISABLE_REQUIRE=true
       - CONFIG_PATH=/workspace/config.json
       - MODEL_ID=${OMNI_ENCODER_AUDIO_MODEL_ID}
     ipc: host
@@ -99,7 +104,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["4"]
+              device_ids: ["0"]
               capabilities: [gpu]
     profiles:
       - track-b
@@ -125,6 +130,7 @@ services:
     volumes:
       - ${OMNI_ENCODER_VISION_MODEL_PATH}:/workspace/app/model/weights:ro
     environment:
+      - NVIDIA_DISABLE_REQUIRE=true
       - CONFIG_PATH=/workspace/config.json
       - MODEL_ID=${OMNI_ENCODER_VISION_MODEL_ID}
     ipc: host
@@ -134,7 +140,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["4"]
+              device_ids: ["0"]
               capabilities: [gpu]
     profiles:
       - track-b
@@ -165,6 +171,8 @@ services:
     container_name: omni-decoder-vision-api
     ports:
       - "${OMNI_DECODER_VISION_API_PORT:-10063}:10063"
+    environment:
+      - NVIDIA_DISABLE_REQUIRE=true
     ipc: host
     shm_size: '16gb'
     deploy:
@@ -172,7 +180,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["5"]
+              device_ids: ["0"]
               capabilities: [gpu]
     profiles:
       - track-b
@@ -182,7 +190,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 180s  # 모델 로딩 시간 고려 (3분)
+      start_period: 180s
     networks:
       - encoder-network
 
@@ -198,6 +206,7 @@ services:
     volumes:
       - ./decoder/audio/track_b/examples:/etc/config:ro
     environment:
+      - NVIDIA_DISABLE_REQUIRE=true
       - ENDPOINT=http://omni-decoder-audio-torchserve:8081/predictions
       - ZEROSHOT_MODEL=NCZSCosybigvganDecoder
       - FINETUNED_MODEL=NCCosybigvganDecoder
@@ -218,7 +227,6 @@ services:
     networks:
       - encoder-network
 
-  # Audio Decoder Track B Codec - TorchServe Backend
   omni-decoder-audio-torchserve:
     build:
       context: ./decoder/audio/codec
@@ -238,6 +246,8 @@ services:
       - ./decoder/audio/codec/config.properties:/app/config.properties:ro
     ports:
       - "${OMNI_DECODER_AUDIO_TORCHSERVE_PORT:-11181}:8081"
+    environment:
+      - NVIDIA_DISABLE_REQUIRE=true
     healthcheck:
       test: ["CMD-SHELL", "nc -z localhost 8081"]
       interval: 30s
@@ -254,12 +264,13 @@ services:
           memory: 4G
           devices:
             - driver: nvidia
-              device_ids: ["5"]
+              device_ids: ["0"]
               capabilities: [gpu]
     profiles:
       - track-b
     networks:
       - encoder-network
+
   omni:
     env_file:
     - .env
@@ -270,12 +281,17 @@ services:
     runtime: nvidia
     user: root
     entrypoint: ["/bin/bash", "-c"]
-    command: ["vllm serve /vllm-workspace/llm/model --enable-prompt-embeds --served-model-name track_b_model --chat-template-content-format=string --host 0.0.0.0 --port 10032 --trust-remote-code --enable-auto-tool-choice --tool-call-parser omni --reasoning-parser deepseek_v3 --chat-template /vllm-workspace/chat_template.jinja --reasoning-config '{\"think_start_str\": \"<think>\", \"think_end_str\": \"</think>\"}'"]
+    # VLLM_USE_V1=0와 호환되는 안정적인 V0 옵션들만 사용
+    command: ["vllm serve /vllm-workspace/llm/model --enable-prompt-embeds --served-model-name track_b_model --chat-template-content-format=string --host 0.0.0.0 --port 10032 --trust-remote-code --enable-auto-tool-choice --tool-call-parser omni --reasoning-parser deepseek_v3 --chat-template /vllm-workspace/chat_template.jinja --reasoning-config '{\"think_start_str\": \"<think>\", \"think_end_str\": \"</think>\"}' --gpu-memory-utilization 0.7"]
     ports:
       - "${OMNI_PORT:-10032}:10032"
     volumes:
       - ./omni_chainer/tests/chat_template/track_b/chat_template.jinja:/vllm-workspace/chat_template.jinja:ro
       - ${OMNI_MODEL_PATH}:/vllm-workspace/llm/model:ro
+    environment:
+      - NVIDIA_DISABLE_REQUIRE=true
+      - VLLM_USE_V1=0  # 신규 엔진(V1)을 끄고 안정적인 V0 사용
+      - VLLM_ATTENTION_BACKEND=FLASH_ATTN
     ipc: host
     shm_size: '16gb'
     restart: unless-stopped
@@ -290,7 +306,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["6"]
+              device_ids: ["0"]
               capabilities: [gpu]
     profiles:
       - track-b
@@ -305,7 +321,7 @@ services:
       dockerfile: docker/omni_chainer.dockerfile
     container_name: omni-chainer
     ports:
-      - "${OMNI_CHAINER_API_PORT:-8000}:8000"
+      - "9000:8000"
     environment:
       - TRACK_A_LLM_ENDPOINT=http://vlm:10021/v1/chat/completions
       - TRACK_A_VISION_ENCODING_ENDPOINT=http://vlm-encoder-vision-api:8000/process_image_or_video
